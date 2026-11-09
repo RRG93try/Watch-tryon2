@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="pt-BR"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="theme-color" content="#101114"><title>Watch Try-On — Protótipo 02</title>
+<meta name="theme-color" content="#101114"><meta name="app-version" content="3"><title>Watch Try-On — Protótipo 03</title>
 <style>
 *{box-sizing:border-box}body{margin:0;background:#101114;color:#f5f5f5;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
 .app{max-width:760px;margin:auto;padding:16px 13px 30px}h1{font-size:23px;margin:0 0 5px}.sub,.hint,.intro,.small{color:#a8abb3;line-height:1.45}
@@ -14,13 +14,13 @@ video,canvas{position:absolute;inset:0;width:100%;height:100%}video{object-fit:c
 #status{font-size:13px;line-height:1.5}.hint,.intro,.small{font-size:12px;margin-top:8px}.tag{font-size:10px;color:#aeb3c0;margin-top:9px}
 .adjust h2{font-size:16px;margin:0 0 5px}.control{margin:14px 0}.control-top{display:flex;justify-content:space-between;gap:8px;font-size:13px;margin-bottom:6px}output{color:#c7d5ff;font-variant-numeric:tabular-nums}input[type=range]{width:100%;accent-color:#d5d9e4}.buttons button{flex:1;font-size:13px}
 </style></head><body><main class="app">
-<header><h1>Watch Try-On</h1><div class="sub">Protótipo 02 · Calibração do relógio no pulso</div></header>
+<header><h1>Watch Try-On</h1><div class="sub">Protótipo 03 · Orientação pelo eixo do antebraço</div></header>
 <section class="stage" id="stage"><video id="video" autoplay muted playsinline></video><canvas id="overlay"></canvas>
 <div class="placeholder" id="placeholder">Toque em “Iniciar câmera” e mostre a mão e o pulso para a câmera traseira.</div></section>
 <div class="controls"><button id="start">Iniciar câmera</button><button id="stop" disabled>Parar</button></div>
 <section class="panel"><div id="status">Aguardando autorização da câmera.</div>
 <div class="hint">Mostre a palma e o pulso inteiro. Mantenha o braço relativamente reto e use boa iluminação. Ajuste os controles olhando para a imagem ao vivo.</div>
-<div class="tag">MODELO 3D DEMONSTRATIVO · ESCALA AINDA APROXIMADA</div></section>
+<div class="tag">PROTÓTIPO 03 · ORIENTAÇÃO CORRIGIDA · ESCALA AINDA APROXIMADA</div></section>
 <section class="adjust"><h2>Calibrar posição</h2><div class="intro">Mova um controle de cada vez. Os ajustes são aplicados em tempo real.</div>
 <div class="control"><div class="control-top"><label for="along">Em direção ao antebraço / mão</label><output id="alongOut">0</output></div><input id="along" type="range" min="-60" max="60" value="0"></div>
 <div class="control"><div class="control-top"><label for="across">Deslocamento lateral</label><output id="acrossOut">0</output></div><input id="across" type="range" min="-60" max="60" value="0"></div>
@@ -64,9 +64,12 @@ if(res.landmarks?.length){let lm=res.landmarks[0],r=rect(),wrist=point(lm[0],r),
 let width=Math.hypot(pink.x-idx.x,pink.y-idx.y),ax=wrist.x-mid.x,ay=wrist.y-mid.y,len=Math.max(1,Math.hypot(ax,ay));ax/=len;ay/=len;
 let tx=(pink.x-idx.x)/Math.max(1,width),ty=(pink.y-idx.y)/Math.max(1,width);
 let bx=wrist.x+ax*width*.30+tx*c.across,by=wrist.y+ay*width*.30+ty*c.across;
-let x=bx+ax*c.along,y=by+ay*c.along,angle=Math.atan2(-ty,tx)+THREE.MathUtils.degToRad(c.rotation),size=Math.max(36,width*.53)*c.size;
+let x=bx+ax*c.along,y=by+ay*c.along,// A pulseira (eixo Y local do relógio) deve acompanhar o eixo longitudinal
+// do antebraço: vetor do centro da mão em direção ao cotovelo.
+let angle=Math.atan2(-ax,-ay)+THREE.MathUtils.degToRad(c.rotation);
+let size=Math.max(36,width*.53)*c.size;
 if(!filtered)filtered={x,y,angle,size};let alpha=1-c.smooth;filtered.x=lerp(filtered.x,x,alpha);filtered.y=lerp(filtered.y,y,alpha);let da=((angle-filtered.angle+Math.PI*3)%(Math.PI*2))-Math.PI;filtered.angle+=da*alpha;filtered.size=lerp(filtered.size,size,alpha);
-watch.position.set(filtered.x,stage.clientHeight-filtered.y,2);watch.rotation.z=filtered.angle;watch.scale.set(filtered.size,filtered.size,filtered.size);watch.visible=true;placeholder.style.display="none";statusEl.textContent="Mão detectada. Use os controles para centralizar e alinhar o relógio.";
+watch.position.set(filtered.x,stage.clientHeight-filtered.y,2);watch.rotation.z=filtered.angle;watch.scale.set(filtered.size,filtered.size,filtered.size);watch.visible=true;placeholder.style.display="none";statusEl.textContent="Mão detectada. A pulseira acompanha o eixo do antebraço. Ajuste a posição se necessário.";
 }else{watch.visible=false;filtered=null;statusEl.textContent="Não encontrei a mão. Mostre a palma e o pulso inteiro.";}}
 renderer.render(scene,camera);raf=requestAnimationFrame(draw);}
 async function start(){startBtn.disabled=true;statusEl.textContent="Solicitando acesso à câmera...";try{
