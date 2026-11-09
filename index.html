@@ -1,347 +1,81 @@
 <!doctype html>
-<html lang="pt-BR">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="theme-color" content="#101114">
-  <title>Watch Try-On — Protótipo 01</title>
-  <style>
-    * { box-sizing: border-box; }
-    body {
-      margin: 0; background: #101114; color: #f5f5f5;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-    }
-    .app { max-width: 760px; margin: 0 auto; padding: 18px 14px 30px; }
-    header { padding: 8px 4px 16px; }
-    h1 { font-size: 23px; margin: 0 0 5px; letter-spacing: -.4px; }
-    .sub { color: #a8abb3; font-size: 13px; line-height: 1.45; }
-    .stage {
-      position: relative; width: 100%; aspect-ratio: 3 / 4;
-      max-height: 72vh; margin: 0 auto; overflow: hidden;
-      background: #202228; border-radius: 18px;
-      border: 1px solid #383b44;
-    }
-    video, canvas {
-      position: absolute; inset: 0; width: 100%; height: 100%;
-    }
-    video { object-fit: contain; }
-    #overlay { pointer-events: none; }
-    .placeholder {
-      position: absolute; inset: 0; display: grid; place-items: center;
-      padding: 28px; text-align: center; color: #c7cad2;
-      line-height: 1.5; font-size: 14px; pointer-events: none;
-    }
-    .controls { display: flex; gap: 10px; margin-top: 14px; }
-    button {
-      border: 0; border-radius: 12px; padding: 14px 16px;
-      font-size: 15px; font-weight: 650; cursor: pointer;
-    }
-    #start { background: #e8e9ed; color: #15161a; flex: 1; }
-    #stop { background: #30333b; color: #f5f5f5; }
-    button:disabled { opacity: .45; cursor: default; }
-    .panel {
-      margin-top: 13px; background: #1b1d23; border: 1px solid #30333b;
-      border-radius: 14px; padding: 13px 14px;
-    }
-    #status { font-size: 13px; color: #d7d9df; line-height: 1.5; }
-    .hint { color: #a8abb3; font-size: 12px; line-height: 1.5; margin-top: 8px; }
-    .tag { display: inline-block; margin-top: 10px; color: #aeb3c0; font-size: 11px; letter-spacing: .4px; }
-  </style>
-</head>
-<body>
-  <main class="app">
-    <header>
-      <h1>Watch Try-On</h1>
-      <div class="sub">Protótipo 01 · Experimente um relógio virtual no seu pulso</div>
-    </header>
-
-    <section class="stage" id="stage">
-      <video id="video" autoplay muted playsinline></video>
-      <canvas id="overlay"></canvas>
-      <div class="placeholder" id="placeholder">
-        Toque em “Iniciar câmera” e mostre sua mão aberta para a câmera traseira.
-      </div>
-    </section>
-
-    <div class="controls">
-      <button id="start">Iniciar câmera</button>
-      <button id="stop" disabled>Parar</button>
-    </div>
-
-    <section class="panel">
-      <div id="status">Aguardando autorização da câmera.</div>
-      <div class="hint">
-        Dica: apoie o antebraço em uma superfície, mantenha a palma da mão voltada para a câmera
-        e deixe aparecer um trecho do antebraço. Boa iluminação ajuda bastante.
-      </div>
-      <div class="tag">MODELO 3D DEMONSTRATIVO · NÃO É UMA MEDIÇÃO CLÍNICA OU COMERCIAL</div>
-    </section>
-  </main>
-
-  <script type="module">
-    import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js";
-    import { FilesetResolver, HandLandmarker } from
-      "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/+esm";
-
-    const video = document.getElementById("video");
-    const canvas = document.getElementById("overlay");
-    const stage = document.getElementById("stage");
-    const statusEl = document.getElementById("status");
-    const placeholder = document.getElementById("placeholder");
-    const startBtn = document.getElementById("start");
-    const stopBtn = document.getElementById("stop");
-
-    let stream = null;
-    let handLandmarker = null;
-    let running = false;
-    let rafId = null;
-    let lastVideoTime = -1;
-
-    const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true });
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
-    renderer.outputColorSpace = THREE.SRGBColorSpace;
-    renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.15;
-
-    const scene = new THREE.Scene();
-    const camera = new THREE.OrthographicCamera(0, 1, 1, 0, 0.1, 100);
-    camera.position.z = 30;
-
-    scene.add(new THREE.HemisphereLight(0xffffff, 0x55515a, 2.0));
-    const keyLight = new THREE.DirectionalLight(0xffffff, 2.4);
-    keyLight.position.set(-5, 8, 12);
-    scene.add(keyLight);
-    const rimLight = new THREE.DirectionalLight(0x9db8ff, 1.0);
-    rimLight.position.set(7, -5, 8);
-    scene.add(rimLight);
-
-    const watch = new THREE.Group();
-    scene.add(watch);
-    watch.visible = false;
-
-    const steel = new THREE.MeshStandardMaterial({
-      color: 0xbfc4cb, metalness: 0.88, roughness: 0.22
-    });
-    const darkSteel = new THREE.MeshStandardMaterial({
-      color: 0x555b65, metalness: 0.82, roughness: 0.3
-    });
-    const strapMat = new THREE.MeshStandardMaterial({
-      color: 0x777e89, metalness: 0.72, roughness: 0.34
-    });
-    const dialMat = new THREE.MeshStandardMaterial({
-      color: 0x101d32, metalness: 0.42, roughness: 0.23
-    });
-    const white = new THREE.MeshStandardMaterial({
-      color: 0xf3f1e9, metalness: 0.25, roughness: 0.3
-    });
-    const gold = new THREE.MeshStandardMaterial({
-      color: 0xc7a45c, metalness: 0.86, roughness: 0.2
-    });
-
-    function roundedRectShape(w, h, r) {
-      const s = new THREE.Shape();
-      const x = -w/2, y = -h/2;
-      s.moveTo(x+r, y); s.lineTo(x+w-r, y); s.quadraticCurveTo(x+w, y, x+w, y+r);
-      s.lineTo(x+w, y+h-r); s.quadraticCurveTo(x+w, y+h, x+w-r, y+h);
-      s.lineTo(x+r, y+h); s.quadraticCurveTo(x, y+h, x, y+h-r);
-      s.lineTo(x, y+r); s.quadraticCurveTo(x, y, x+r, y);
-      return s;
-    }
-
-    // Pulseira superior e inferior
-    const strapGeo = new THREE.ExtrudeGeometry(roundedRectShape(0.48, 0.92, 0.12), {
-      depth: 0.10, bevelEnabled: true, bevelSegments: 2, steps: 1,
-      bevelSize: 0.035, bevelThickness: 0.025, curveSegments: 8
-    });
-    const strapTop = new THREE.Mesh(strapGeo, strapMat);
-    strapTop.position.set(0, 0.93, -0.02);
-    watch.add(strapTop);
-    const strapBottom = new THREE.Mesh(strapGeo, strapMat);
-    strapBottom.position.set(0, -0.93, -0.02);
-    watch.add(strapBottom);
-
-    // Caixa, aro e mostrador
-    const caseBody = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.68, 0.68, 0.18, 64), steel
-    );
-    caseBody.rotation.x = Math.PI / 2;
-    watch.add(caseBody);
-
-    const bezel = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.63, 0.66, 0.09, 64), darkSteel
-    );
-    bezel.rotation.x = Math.PI / 2;
-    bezel.position.z = 0.13;
-    watch.add(bezel);
-
-    const dial = new THREE.Mesh(new THREE.CircleGeometry(0.575, 64), dialMat);
-    dial.position.z = 0.19;
-    watch.add(dial);
-
-    // Marcadores de hora
-    for (let i = 0; i < 12; i++) {
-      const a = i * Math.PI / 6;
-      const marker = new THREE.Mesh(
-        new THREE.BoxGeometry(i % 3 === 0 ? 0.055 : 0.026, i % 3 === 0 ? 0.15 : 0.09, 0.018),
-        i % 3 === 0 ? gold : white
-      );
-      marker.position.set(Math.sin(a) * 0.47, Math.cos(a) * 0.47, 0.225);
-      marker.rotation.z = -a;
-      watch.add(marker);
-    }
-
-    // Ponteiros demonstrativos
-    const hourHand = new THREE.Mesh(new THREE.BoxGeometry(0.055, 0.29, 0.025), white);
-    hourHand.position.set(-0.04, 0.06, 0.25);
-    hourHand.rotation.z = -0.45;
-    watch.add(hourHand);
-
-    const minuteHand = new THREE.Mesh(new THREE.BoxGeometry(0.035, 0.42, 0.028), white);
-    minuteHand.position.set(0.035, 0.08, 0.265);
-    minuteHand.rotation.z = 0.55;
-    watch.add(minuteHand);
-
-    const centerPin = new THREE.Mesh(new THREE.SphereGeometry(0.055, 16, 16), gold);
-    centerPin.position.z = 0.29;
-    watch.add(centerPin);
-
-    // Coroa lateral
-    const crown = new THREE.Mesh(new THREE.CylinderGeometry(0.105, 0.105, 0.20, 24), gold);
-    crown.rotation.z = Math.PI / 2;
-    crown.position.set(0.70, 0, 0);
-    watch.add(crown);
-
-    function resize() {
-      const w = stage.clientWidth;
-      const h = stage.clientHeight;
-      renderer.setSize(w, h, false);
-      camera.left = 0; camera.right = w; camera.top = 0; camera.bottom = h;
-      camera.updateProjectionMatrix();
-    }
-    new ResizeObserver(resize).observe(stage);
-    resize();
-
-    function videoRect() {
-      const boxW = stage.clientWidth, boxH = stage.clientHeight;
-      const vw = video.videoWidth || boxW, vh = video.videoHeight || boxH;
-      const scale = Math.min(boxW / vw, boxH / vh);
-      const w = vw * scale, h = vh * scale;
-      return { x: (boxW-w)/2, y: (boxH-h)/2, w, h };
-    }
-
-    function landmarkPoint(lm, rect) {
-      return { x: rect.x + lm.x * rect.w, y: rect.y + lm.y * rect.h };
-    }
-
-    function renderFrame() {
-      if (!running) return;
-      if (video.readyState >= 2 && video.currentTime !== lastVideoTime && handLandmarker) {
-        lastVideoTime = video.currentTime;
-        const result = handLandmarker.detectForVideo(video, performance.now());
-        if (result.landmarks && result.landmarks.length > 0) {
-          const lm = result.landmarks[0];
-          const rect = videoRect();
-          const p0 = landmarkPoint(lm[0], rect);   // punho
-          const p5 = landmarkPoint(lm[5], rect);   // base do indicador
-          const p9 = landmarkPoint(lm[9], rect);   // base do dedo médio
-          const p17 = landmarkPoint(lm[17], rect);// base do mindinho
-
-          const wristWidth = Math.hypot(p17.x-p5.x, p17.y-p5.y);
-          const forearmX = p0.x - p9.x;
-          const forearmY = p0.y - p9.y;
-          const forearmLen = Math.max(1, Math.hypot(forearmX, forearmY));
-          const ux = forearmX / forearmLen;
-          const uy = forearmY / forearmLen;
-
-          // A caixa fica um pouco à frente do vinco do pulso, em direção ao antebraço.
-          const centerX = p0.x + ux * wristWidth * 0.30;
-          const centerY = p0.y + uy * wristWidth * 0.30;
-          const acrossX = p17.x - p5.x;
-          const acrossY = p17.y - p5.y;
-          const angle = Math.atan2(-acrossY, acrossX);
-
-          // Relação inicial aproximada: caixa de 40 mm para uma largura de mão típica.
-          const casePixels = Math.max(36, wristWidth * 0.53);
-          watch.position.set(centerX, stage.clientHeight-centerY, 2);
-          watch.rotation.z = angle;
-          watch.scale.set(casePixels, casePixels, casePixels);
-          watch.visible = true;
-          statusEl.textContent = "Mão detectada. Mova o pulso devagar para testar o acompanhamento.";
-          placeholder.style.display = "none";
-        } else {
-          watch.visible = false;
-          statusEl.textContent = "Não encontrei a mão. Mostre a palma e o pulso inteiro para a câmera.";
-        }
-      }
-      renderer.render(scene, camera);
-      rafId = requestAnimationFrame(renderFrame);
-    }
-
-    async function startCamera() {
-      startBtn.disabled = true;
-      statusEl.textContent = "Solicitando acesso à câmera...";
-      try {
-        if (!navigator.mediaDevices?.getUserMedia) {
-          throw new Error("A câmera exige uma página HTTPS e um navegador compatível. Abra o link no Safari.");
-        }
-        stream = await navigator.mediaDevices.getUserMedia({
-          audio: false,
-          video: {
-            facingMode: { ideal: "environment" },
-            width: { ideal: 1280 },
-            height: { ideal: 720 }
-          }
-        });
-        video.srcObject = stream;
-        await video.play();
-
-        statusEl.textContent = "Carregando reconhecimento da mão...";
-        const vision = await FilesetResolver.forVisionTasks(
-          "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm"
-        );
-        handLandmarker = await HandLandmarker.createFromOptions(vision, {
-          baseOptions: {
-            modelAssetPath: "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task",
-            delegate: "GPU"
-          },
-          runningMode: "VIDEO",
-          numHands: 1
-        });
-
-        running = true;
-        placeholder.style.display = "none";
-        stopBtn.disabled = false;
-        statusEl.textContent = "Câmera ligada. Mostre sua mão aberta para começar.";
-        renderFrame();
-      } catch (err) {
-        console.error(err);
-        statusEl.textContent = "Não foi possível iniciar: " + (err?.message || err) +
-          " Se o erro mencionar GPU, será necessário ativar a opção CPU no código.";
-        if (stream) stream.getTracks().forEach(t => t.stop());
-        stream = null;
-        startBtn.disabled = false;
-      }
-    }
-
-    function stopCamera() {
-      running = false;
-      if (rafId) cancelAnimationFrame(rafId);
-      if (stream) stream.getTracks().forEach(t => t.stop());
-      stream = null;
-      video.srcObject = null;
-      watch.visible = false;
-      renderer.render(scene, camera);
-      placeholder.style.display = "grid";
-      placeholder.textContent = "Câmera desligada. Toque em “Iniciar câmera” para testar novamente.";
-      statusEl.textContent = "Câmera desligada.";
-      startBtn.disabled = false;
-      stopBtn.disabled = true;
-    }
-
-    startBtn.addEventListener("click", startCamera);
-    stopBtn.addEventListener("click", stopCamera);
-    window.addEventListener("pagehide", stopCamera);
-  </script>
-</body>
-</html>
+<html lang="pt-BR"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#101114"><title>Watch Try-On — Protótipo 02</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#101114;color:#f5f5f5;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+.app{max-width:760px;margin:auto;padding:16px 13px 30px}h1{font-size:23px;margin:0 0 5px}.sub,.hint,.intro,.small{color:#a8abb3;line-height:1.45}
+.sub{font-size:13px}.stage{position:relative;width:100%;aspect-ratio:3/4;max-height:68vh;overflow:hidden;background:#202228;border:1px solid #383b44;border-radius:18px;margin:14px auto}
+video,canvas{position:absolute;inset:0;width:100%;height:100%}video{object-fit:contain}#overlay{pointer-events:none}
+.placeholder{position:absolute;inset:0;display:grid;place-items:center;text-align:center;padding:26px;color:#c7cad2;font-size:14px;line-height:1.5}
+.controls,.buttons{display:flex;gap:9px;margin-top:12px}button{border:0;border-radius:12px;padding:13px 15px;font-size:15px;font-weight:650;cursor:pointer}
+#start{background:#e8e9ed;color:#15161a;flex:1}#stop,.buttons button{background:#30333b;color:white}button:disabled{opacity:.45}
+.panel,.adjust{margin-top:12px;background:#1b1d23;border:1px solid #30333b;border-radius:14px;padding:14px}
+#status{font-size:13px;line-height:1.5}.hint,.intro,.small{font-size:12px;margin-top:8px}.tag{font-size:10px;color:#aeb3c0;margin-top:9px}
+.adjust h2{font-size:16px;margin:0 0 5px}.control{margin:14px 0}.control-top{display:flex;justify-content:space-between;gap:8px;font-size:13px;margin-bottom:6px}output{color:#c7d5ff;font-variant-numeric:tabular-nums}input[type=range]{width:100%;accent-color:#d5d9e4}.buttons button{flex:1;font-size:13px}
+</style></head><body><main class="app">
+<header><h1>Watch Try-On</h1><div class="sub">Protótipo 02 · Calibração do relógio no pulso</div></header>
+<section class="stage" id="stage"><video id="video" autoplay muted playsinline></video><canvas id="overlay"></canvas>
+<div class="placeholder" id="placeholder">Toque em “Iniciar câmera” e mostre a mão e o pulso para a câmera traseira.</div></section>
+<div class="controls"><button id="start">Iniciar câmera</button><button id="stop" disabled>Parar</button></div>
+<section class="panel"><div id="status">Aguardando autorização da câmera.</div>
+<div class="hint">Mostre a palma e o pulso inteiro. Mantenha o braço relativamente reto e use boa iluminação. Ajuste os controles olhando para a imagem ao vivo.</div>
+<div class="tag">MODELO 3D DEMONSTRATIVO · ESCALA AINDA APROXIMADA</div></section>
+<section class="adjust"><h2>Calibrar posição</h2><div class="intro">Mova um controle de cada vez. Os ajustes são aplicados em tempo real.</div>
+<div class="control"><div class="control-top"><label for="along">Em direção ao antebraço / mão</label><output id="alongOut">0</output></div><input id="along" type="range" min="-60" max="60" value="0"></div>
+<div class="control"><div class="control-top"><label for="across">Deslocamento lateral</label><output id="acrossOut">0</output></div><input id="across" type="range" min="-60" max="60" value="0"></div>
+<div class="control"><div class="control-top"><label for="size">Tamanho da caixa</label><output id="sizeOut">100%</output></div><input id="size" type="range" min="65" max="145" value="100"></div>
+<div class="control"><div class="control-top"><label for="rotation">Rotação</label><output id="rotationOut">0°</output></div><input id="rotation" type="range" min="-45" max="45" value="0"></div>
+<div class="control"><div class="control-top"><label for="smooth">Estabilização</label><output id="smoothOut">70%</output></div><input id="smooth" type="range" min="0" max="95" step="5" value="70"></div>
+<div class="buttons"><button id="reset">Zerar ajustes</button></div>
+<div class="small">A calibração é visual e aproximada; não representa medição física certificada.</div></section></main>
+<script type="module">
+import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js";
+import {FilesetResolver,HandLandmarker} from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/+esm";
+const video=document.getElementById("video"),canvas=document.getElementById("overlay"),stage=document.getElementById("stage");
+const statusEl=document.getElementById("status"),placeholder=document.getElementById("placeholder"),startBtn=document.getElementById("start"),stopBtn=document.getElementById("stop");
+const c={along:0,across:0,size:1,rotation:0,smooth:.7};
+for(const k of Object.keys(c)){const el=document.getElementById(k),out=document.getElementById(k+"Out");const update=()=>{let v=+el.value;c[k]=k==="size"?v/100:k==="smooth"?v/100:v;out.textContent=k==="size"||k==="smooth"?v+"%":k==="rotation"?v+"°":v;};el.addEventListener("input",update);update();}
+document.getElementById("reset").onclick=()=>{for(const [k,v] of Object.entries({along:0,across:0,size:100,rotation:0,smooth:70})){let e=document.getElementById(k);e.value=v;e.dispatchEvent(new Event("input"));}};
+let stream=null,detector=null,running=false,raf=0,last=-1,filtered=null;
+const renderer=new THREE.WebGLRenderer({canvas,alpha:true,antialias:true});renderer.setPixelRatio(Math.min(devicePixelRatio||1,2));renderer.outputColorSpace=THREE.SRGBColorSpace;renderer.toneMapping=THREE.ACESFilmicToneMapping;renderer.toneMappingExposure=1.15;
+const scene=new THREE.Scene(),camera=new THREE.OrthographicCamera(0,1,1,0,.1,100);camera.position.z=30;
+scene.add(new THREE.HemisphereLight(0xffffff,0x55515a,2));let light=new THREE.DirectionalLight(0xffffff,2.4);light.position.set(-5,8,12);scene.add(light);
+let watch=new THREE.Group();scene.add(watch);watch.visible=false;
+const mat=(color,metalness,roughness)=>new THREE.MeshStandardMaterial({color,metalness,roughness});
+const steel=mat(0xbfc4cb,.88,.22),dark=mat(0x555b65,.82,.3),strap=mat(0x777e89,.72,.34),dialmat=mat(0x101d32,.42,.23),white=mat(0xf3f1e9,.25,.3),gold=mat(0xc7a45c,.86,.2);
+function shape(w,h,r){let s=new THREE.Shape(),x=-w/2,y=-h/2;s.moveTo(x+r,y);s.lineTo(x+w-r,y);s.quadraticCurveTo(x+w,y,x+w,y+r);s.lineTo(x+w,y+h-r);s.quadraticCurveTo(x+w,y+h,x+w-r,y+h);s.lineTo(x+r,y+h);s.quadraticCurveTo(x,y+h,x,y+h-r);s.lineTo(x,y+r);s.quadraticCurveTo(x,y,x+r,y);return s;}
+let sg=new THREE.ExtrudeGeometry(shape(.48,.92,.12),{depth:.1,bevelEnabled:true,bevelSegments:2,bevelSize:.035,bevelThickness:.025});
+for(let y of [.93,-.93]){let m=new THREE.Mesh(sg,strap);m.position.set(0,y,-.02);watch.add(m);}
+let body=new THREE.Mesh(new THREE.CylinderGeometry(.68,.68,.18,64),steel);body.rotation.x=Math.PI/2;watch.add(body);
+let bezel=new THREE.Mesh(new THREE.CylinderGeometry(.63,.66,.09,64),dark);bezel.rotation.x=Math.PI/2;bezel.position.z=.13;watch.add(bezel);
+let face=new THREE.Mesh(new THREE.CircleGeometry(.575,64),dialmat);face.position.z=.19;watch.add(face);
+for(let i=0;i<12;i++){let a=i*Math.PI/6,m=new THREE.Mesh(new THREE.BoxGeometry(i%3===0?.055:.026,i%3===0?.15:.09,.018),i%3===0?gold:white);m.position.set(Math.sin(a)*.47,Math.cos(a)*.47,.225);m.rotation.z=-a;watch.add(m);}
+let h=new THREE.Mesh(new THREE.BoxGeometry(.055,.29,.025),white);h.position.set(-.04,.06,.25);h.rotation.z=-.45;watch.add(h);
+let min=new THREE.Mesh(new THREE.BoxGeometry(.035,.42,.028),white);min.position.set(.035,.08,.265);min.rotation.z=.55;watch.add(min);
+let pin=new THREE.Mesh(new THREE.SphereGeometry(.055,16,16),gold);pin.position.z=.29;watch.add(pin);
+let crown=new THREE.Mesh(new THREE.CylinderGeometry(.105,.105,.2,24),gold);crown.rotation.z=Math.PI/2;crown.position.set(.7,0,0);watch.add(crown);
+function resize(){let w=stage.clientWidth,h=stage.clientHeight;renderer.setSize(w,h,false);camera.left=0;camera.right=w;camera.top=0;camera.bottom=h;camera.updateProjectionMatrix();}
+new ResizeObserver(resize).observe(stage);resize();
+function rect(){let bw=stage.clientWidth,bh=stage.clientHeight,vw=video.videoWidth||bw,vh=video.videoHeight||bh,s=Math.min(bw/vw,bh/vh),w=vw*s,h=vh*s;return{x:(bw-w)/2,y:(bh-h)/2,w,h};}
+function point(l,r){return{x:r.x+l.x*r.w,y:r.y+l.y*r.h};}const lerp=(a,b,t)=>a+(b-a)*t;
+function draw(){if(!running)return;if(video.readyState>=2&&video.currentTime!==last&&detector){last=video.currentTime;let res=detector.detectForVideo(video,performance.now());
+if(res.landmarks?.length){let lm=res.landmarks[0],r=rect(),wrist=point(lm[0],r),idx=point(lm[5],r),mid=point(lm[9],r),pink=point(lm[17],r);
+let width=Math.hypot(pink.x-idx.x,pink.y-idx.y),ax=wrist.x-mid.x,ay=wrist.y-mid.y,len=Math.max(1,Math.hypot(ax,ay));ax/=len;ay/=len;
+let tx=(pink.x-idx.x)/Math.max(1,width),ty=(pink.y-idx.y)/Math.max(1,width);
+let bx=wrist.x+ax*width*.30+tx*c.across,by=wrist.y+ay*width*.30+ty*c.across;
+let x=bx+ax*c.along,y=by+ay*c.along,angle=Math.atan2(-ty,tx)+THREE.MathUtils.degToRad(c.rotation),size=Math.max(36,width*.53)*c.size;
+if(!filtered)filtered={x,y,angle,size};let alpha=1-c.smooth;filtered.x=lerp(filtered.x,x,alpha);filtered.y=lerp(filtered.y,y,alpha);let da=((angle-filtered.angle+Math.PI*3)%(Math.PI*2))-Math.PI;filtered.angle+=da*alpha;filtered.size=lerp(filtered.size,size,alpha);
+watch.position.set(filtered.x,stage.clientHeight-filtered.y,2);watch.rotation.z=filtered.angle;watch.scale.set(filtered.size,filtered.size,filtered.size);watch.visible=true;placeholder.style.display="none";statusEl.textContent="Mão detectada. Use os controles para centralizar e alinhar o relógio.";
+}else{watch.visible=false;filtered=null;statusEl.textContent="Não encontrei a mão. Mostre a palma e o pulso inteiro.";}}
+renderer.render(scene,camera);raf=requestAnimationFrame(draw);}
+async function start(){startBtn.disabled=true;statusEl.textContent="Solicitando acesso à câmera...";try{
+if(!navigator.mediaDevices?.getUserMedia)throw Error("A câmera exige HTTPS e navegador compatível.");
+stream=await navigator.mediaDevices.getUserMedia({audio:false,video:{facingMode:{ideal:"environment"},width:{ideal:1280},height:{ideal:720}}});video.srcObject=stream;await video.play();
+statusEl.textContent="Carregando reconhecimento da mão...";let vision=await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm");
+detector=await HandLandmarker.createFromOptions(vision,{baseOptions:{modelAssetPath:"https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task",delegate:"GPU"},runningMode:"VIDEO",numHands:1});
+running=true;filtered=null;placeholder.style.display="none";stopBtn.disabled=false;statusEl.textContent="Câmera ligada. Mostre sua mão aberta.";draw();
+}catch(e){console.error(e);statusEl.textContent="Não foi possível iniciar: "+(e?.message||e);if(stream)stream.getTracks().forEach(t=>t.stop());stream=null;startBtn.disabled=false;}}
+function stop(){running=false;if(raf)cancelAnimationFrame(raf);if(stream)stream.getTracks().forEach(t=>t.stop());stream=null;video.srcObject=null;watch.visible=false;filtered=null;renderer.render(scene,camera);placeholder.style.display="grid";placeholder.textContent="Câmera desligada. Toque em Iniciar câmera para testar novamente.";statusEl.textContent="Câmera desligada.";startBtn.disabled=false;stopBtn.disabled=true;}
+startBtn.addEventListener("click",start);stopBtn.addEventListener("click",stop);window.addEventListener("pagehide",stop);
+</script></body></html>
