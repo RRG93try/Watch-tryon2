@@ -1,12 +1,12 @@
 <!doctype html>
 <html lang="pt-BR"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="theme-color" content="#101114"><meta name="app-version" content="3.1"><title>Watch Try-On — Protótipo 03</title>
+<meta name="theme-color" content="#101114"><meta name="app-version" content="4.0A"><title>Watch Try-On — Protótipo 04A</title>
 <style>
 *{box-sizing:border-box}body{margin:0;background:#101114;color:#f5f5f5;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
 .app{max-width:760px;margin:auto;padding:16px 13px 30px}h1{font-size:23px;margin:0 0 5px}.sub,.hint,.intro,.small{color:#a8abb3;line-height:1.45}
 .sub{font-size:13px}.stage{position:relative;width:100%;aspect-ratio:3/4;max-height:68vh;overflow:hidden;background:#202228;border:1px solid #383b44;border-radius:18px;margin:14px auto}
-video,canvas{position:absolute;inset:0;width:100%;height:100%}video{object-fit:contain}#overlay{pointer-events:none}
+video,canvas{position:absolute;inset:0;width:100%;height:100%}video{object-fit:contain}#overlay,#guide{pointer-events:none}#guide{z-index:3}
 .placeholder{position:absolute;inset:0;display:grid;place-items:center;text-align:center;padding:26px;color:#c7cad2;font-size:14px;line-height:1.5}
 .controls,.buttons{display:flex;gap:9px;margin-top:12px}button{border:0;border-radius:12px;padding:13px 15px;font-size:15px;font-weight:650;cursor:pointer}
 #start{background:#e8e9ed;color:#15161a;flex:1}#stop,.buttons button{background:#30333b;color:white}button:disabled{opacity:.45}
@@ -14,13 +14,13 @@ video,canvas{position:absolute;inset:0;width:100%;height:100%}video{object-fit:c
 #status{font-size:13px;line-height:1.5}.hint,.intro,.small{font-size:12px;margin-top:8px}.tag{font-size:10px;color:#aeb3c0;margin-top:9px}
 .adjust h2{font-size:16px;margin:0 0 5px}.control{margin:14px 0}.control-top{display:flex;justify-content:space-between;gap:8px;font-size:13px;margin-bottom:6px}output{color:#c7d5ff;font-variant-numeric:tabular-nums}input[type=range]{width:100%;accent-color:#d5d9e4}.buttons button{flex:1;font-size:13px}
 </style></head><body><main class="app">
-<header><h1>Watch Try-On</h1><div class="sub">Protótipo 03 corrigido · Orientação pelo eixo do antebraço</div></header>
-<section class="stage" id="stage"><video id="video" autoplay muted playsinline></video><canvas id="overlay"></canvas>
-<div class="placeholder" id="placeholder">Toque em “Iniciar câmera” e mostre a mão e o pulso para a câmera traseira.</div></section>
+<header><h1>Watch Try-On</h1><div class="sub">Protótipo 04A · Rastreamento por marcador QR</div></header>
+<section class="stage" id="stage"><video id="video" autoplay muted playsinline></video><canvas id="overlay"></canvas><canvas id="guide"></canvas>
+<div class="placeholder" id="placeholder">Deixe o QR Code inteiro visível no monitor e mostre o pulso à câmera.</div></section>
 <div class="controls"><button id="start">Iniciar câmera</button><button id="stop" disabled>Parar</button></div>
 <section class="panel"><div id="status">Aguardando autorização da câmera.</div>
-<div class="hint">Mostre a palma e o pulso inteiro. Mantenha o braço relativamente reto e use boa iluminação. Ajuste os controles olhando para a imagem ao vivo.</div>
-<div class="tag">PROTÓTIPO 03 · ORIENTAÇÃO CORRIGIDA · ESCALA AINDA APROXIMADA</div></section>
+<div class="hint">Exiba um QR Code grande no monitor do notebook (sem cortar as bordas). Posicione o pulso entre a câmera e o monitor. Use boa iluminação e evite reflexos na tela.</div>
+<div class="tag">PROTÓTIPO 04A · QR COMO REFERÊNCIA ESPACIAL · ESCALA AINDA APROXIMADA</div></section>
 <section class="adjust"><h2>Calibrar posição</h2><div class="intro">Mova um controle de cada vez. Os ajustes são aplicados em tempo real.</div>
 <div class="control"><div class="control-top"><label for="along">Em direção ao antebraço / mão</label><output id="alongOut">0</output></div><input id="along" type="range" min="-60" max="60" value="0"></div>
 <div class="control"><div class="control-top"><label for="across">Deslocamento lateral</label><output id="acrossOut">0</output></div><input id="across" type="range" min="-60" max="60" value="0"></div>
@@ -29,15 +29,16 @@ video,canvas{position:absolute;inset:0;width:100%;height:100%}video{object-fit:c
 <div class="control"><div class="control-top"><label for="smooth">Estabilização</label><output id="smoothOut">70%</output></div><input id="smooth" type="range" min="0" max="95" step="5" value="70"></div>
 <div class="buttons"><button id="reset">Zerar ajustes</button></div>
 <div class="small">A calibração é visual e aproximada; não representa medição física certificada.</div></section></main>
+<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
 <script type="module">
 import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js";
 import {FilesetResolver,HandLandmarker} from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/+esm";
-const video=document.getElementById("video"),canvas=document.getElementById("overlay"),stage=document.getElementById("stage");
+const video=document.getElementById("video"),canvas=document.getElementById("overlay"),guide=document.getElementById("guide"),stage=document.getElementById("stage");
 const statusEl=document.getElementById("status"),placeholder=document.getElementById("placeholder"),startBtn=document.getElementById("start"),stopBtn=document.getElementById("stop");
 const c={along:0,across:0,size:1,rotation:0,smooth:.7};
 for(const k of Object.keys(c)){const el=document.getElementById(k),out=document.getElementById(k+"Out");const update=()=>{let v=+el.value;c[k]=k==="size"?v/100:k==="smooth"?v/100:v;out.textContent=k==="size"||k==="smooth"?v+"%":k==="rotation"?v+"°":v;};el.addEventListener("input",update);update();}
 document.getElementById("reset").onclick=()=>{for(const [k,v] of Object.entries({along:0,across:0,size:100,rotation:0,smooth:70})){let e=document.getElementById(k);e.value=v;e.dispatchEvent(new Event("input"));}};
-let stream=null,detector=null,running=false,raf=0,last=-1,filtered=null;
+let stream=null,detector=null,running=false,raf=0,last=-1,filtered=null,filteredUV=null,markerH=null,markerHinv=null,qrCanvas=document.createElement("canvas"),qrCtx=qrCanvas.getContext("2d",{willReadFrequently:true}),guideCtx=guide.getContext("2d");
 const renderer=new THREE.WebGLRenderer({canvas,alpha:true,antialias:true});renderer.setPixelRatio(Math.min(devicePixelRatio||1,2));renderer.outputColorSpace=THREE.SRGBColorSpace;renderer.toneMapping=THREE.ACESFilmicToneMapping;renderer.toneMappingExposure=1.15;
 const scene=new THREE.Scene(),camera=new THREE.OrthographicCamera(0,1,1,0,.1,100);camera.position.z=30;
 scene.add(new THREE.HemisphereLight(0xffffff,0x55515a,2));let light=new THREE.DirectionalLight(0xffffff,2.4);light.position.set(-5,8,12);scene.add(light);
@@ -55,29 +56,40 @@ let h=new THREE.Mesh(new THREE.BoxGeometry(.055,.29,.025),white);h.position.set(
 let min=new THREE.Mesh(new THREE.BoxGeometry(.035,.42,.028),white);min.position.set(.035,.08,.265);min.rotation.z=.55;watch.add(min);
 let pin=new THREE.Mesh(new THREE.SphereGeometry(.055,16,16),gold);pin.position.z=.29;watch.add(pin);
 let crown=new THREE.Mesh(new THREE.CylinderGeometry(.105,.105,.2,24),gold);crown.rotation.z=Math.PI/2;crown.position.set(.7,0,0);watch.add(crown);
-function resize(){let w=stage.clientWidth,h=stage.clientHeight;renderer.setSize(w,h,false);camera.left=0;camera.right=w;camera.top=0;camera.bottom=h;camera.updateProjectionMatrix();}
+function resize(){let w=stage.clientWidth,h=stage.clientHeight;renderer.setSize(w,h,false);guide.width=Math.round(w*(devicePixelRatio||1));guide.height=Math.round(h*(devicePixelRatio||1));guide.style.width=w+"px";guide.style.height=h+"px";guideCtx.setTransform(devicePixelRatio||1,0,0,devicePixelRatio||1,0,0);camera.left=0;camera.right=w;camera.top=0;camera.bottom=h;camera.updateProjectionMatrix();}
 new ResizeObserver(resize).observe(stage);resize();
 function rect(){let bw=stage.clientWidth,bh=stage.clientHeight,vw=video.videoWidth||bw,vh=video.videoHeight||bh,s=Math.min(bw/vw,bh/vh),w=vw*s,h=vh*s;return{x:(bw-w)/2,y:(bh-h)/2,w,h};}
 function point(l,r){return{x:r.x+l.x*r.w,y:r.y+l.y*r.h};}const lerp=(a,b,t)=>a+(b-a)*t;
-function draw(){if(!running)return;if(video.readyState>=2&&video.currentTime!==last&&detector){last=video.currentTime;let res=detector.detectForVideo(video,performance.now());
+function solve8(A,b){for(let i=0;i<8;i++){let max=i;for(let j=i+1;j<8;j++)if(Math.abs(A[j][i])>Math.abs(A[max][i]))max=j;[A[i],A[max]]=[A[max],A[i]];[b[i],b[max]]=[b[max],b[i]];let d=A[i][i];if(Math.abs(d)<1e-10)return null;for(let k=i;k<8;k++)A[i][k]/=d;b[i]/=d;for(let j=0;j<8;j++)if(j!==i){let f=A[j][i];for(let k=i;k<8;k++)A[j][k]-=f*A[i][k];b[j]-=f*b[i];}}return b;}
+function homography(src,dst){let A=[],b=[];for(let i=0;i<4;i++){let{x,y}=src[i],u=dst[i].x,v=dst[i].y;A.push([x,y,1,0,0,0,-u*x,-u*y]);b.push(u);A.push([0,0,0,x,y,1,-v*x,-v*y]);b.push(v);}let q=solve8(A,b);return q?[q[0],q[1],q[2],q[3],q[4],q[5],q[6],q[7],1]:null;}
+function mapH(H,p){if(!H)return null;let d=H[6]*p.x+H[7]*p.y+1;if(Math.abs(d)<1e-8)return null;return{x:(H[0]*p.x+H[1]*p.y+H[2])/d,y:(H[3]*p.x+H[4]*p.y+H[5])/d};}
+function inverseH(H){let src=[{x:0,y:0},{x:1,y:0},{x:1,y:1},{x:0,y:1}],dst=src.map(p=>mapH(H,p));return dst.every(Boolean)?homography(src,dst):null;}
+function findQR(r){if(!window.jsQR||!video.videoWidth)return null;let w=video.videoWidth,h=video.videoHeight;if(qrCanvas.width!==w||qrCanvas.height!==h){qrCanvas.width=w;qrCanvas.height=h;}qrCtx.drawImage(video,0,0,w,h);let data=qrCtx.getImageData(0,0,w,h);let code=window.jsQR(data.data,w,h,{inversionAttempts:"dontInvert"});if(!code)return null;let loc=code.location;const toStage=p=>({x:r.x+p.x*r.w/w,y:r.y+p.y*r.h/h});return[loc.topLeftCorner,loc.topRightCorner,loc.bottomRightCorner,loc.bottomLeftCorner].map(toStage);}
+function drawGuide(corners){let w=stage.clientWidth,h=stage.clientHeight;guideCtx.clearRect(0,0,w,h);if(!corners)return;guideCtx.beginPath();corners.forEach((p,i)=>i?guideCtx.lineTo(p.x,p.y):guideCtx.moveTo(p.x,p.y));guideCtx.closePath();guideCtx.lineWidth=3;guideCtx.strokeStyle="#39e58c";guideCtx.stroke();guideCtx.fillStyle="rgba(57,229,140,.08)";guideCtx.fill();}
+function draw(){if(!running)return;if(video.readyState>=2&&video.currentTime!==last&&detector){last=video.currentTime;let r=rect(),corners=findQR(r);drawGuide(corners);markerH=corners?homography(corners,[{x:0,y:0},{x:1,y:0},{x:1,y:1},{x:0,y:1}]):null;markerHinv=markerH?homography([{x:0,y:0},{x:1,y:0},{x:1,y:1},{x:0,y:1}],corners):null;let res=detector.detectForVideo(video,performance.now());
 if(res.landmarks?.length){let lm=res.landmarks[0],r=rect(),wrist=point(lm[0],r),idx=point(lm[5],r),mid=point(lm[9],r),pink=point(lm[17],r);
 let width=Math.hypot(pink.x-idx.x,pink.y-idx.y),ax=wrist.x-mid.x,ay=wrist.y-mid.y,len=Math.max(1,Math.hypot(ax,ay));ax/=len;ay/=len;
 let tx=(pink.x-idx.x)/Math.max(1,width),ty=(pink.y-idx.y)/Math.max(1,width);
 let bx=wrist.x+ax*width*.30+tx*c.across,by=wrist.y+ay*width*.30+ty*c.across;
-let x=bx+ax*c.along;
-let y=by+ay*c.along;
-// A pulseira (eixo Y local do relógio) acompanha o eixo longitudinal
-// estimado do antebraço: vetor do centro da mão em direção ao cotovelo.
-let angle=Math.atan2(-ax,-ay)+THREE.MathUtils.degToRad(c.rotation);
+let x=bx+ax*c.along,y=by+ay*c.along;
+if(!markerH||!markerHinv){watch.visible=false;filtered=null;filteredUV=null;statusEl.textContent="Mão detectada, mas não encontrei o QR Code. Deixe o código inteiro visível no monitor.";}
+else{
+// Converte a posição do relógio para coordenadas normalizadas do QR.
+// A filtragem ocorre nesse referencial, reduzindo o deslizamento causado por movimentos da câmera.
+let uv=mapH(markerH,{x,y});
+if(uv){let alpha=1-c.smooth;if(!filteredUV)filteredUV={x:uv.x,y:uv.y};filteredUV.x=lerp(filteredUV.x,uv.x,alpha);filteredUV.y=lerp(filteredUV.y,uv.y,alpha);
+let pos=mapH(markerHinv,filteredUV);let angle=Math.atan2(-ax,-ay)+THREE.MathUtils.degToRad(c.rotation);
+// Tamanho continua baseado na largura da mão; a posição e a rotação são filtradas no referencial do marcador.
 let size=Math.max(36,width*.53)*c.size;
-if(!filtered)filtered={x,y,angle,size};let alpha=1-c.smooth;filtered.x=lerp(filtered.x,x,alpha);filtered.y=lerp(filtered.y,y,alpha);let da=((angle-filtered.angle+Math.PI*3)%(Math.PI*2))-Math.PI;filtered.angle+=da*alpha;filtered.size=lerp(filtered.size,size,alpha);
-watch.position.set(filtered.x,stage.clientHeight-filtered.y,2);watch.rotation.z=filtered.angle;watch.scale.set(filtered.size,filtered.size,filtered.size);watch.visible=true;placeholder.style.display="none";statusEl.textContent="Mão detectada. A pulseira acompanha o eixo do antebraço. Ajuste a posição se necessário.";
-}else{watch.visible=false;filtered=null;statusEl.textContent="Não encontrei a mão. Mostre a palma e o pulso inteiro.";}}
+if(!filtered)filtered={x:pos.x,y:pos.y,angle,size};filtered.x=pos.x;filtered.y=pos.y;let da=((angle-filtered.angle+Math.PI*3)%(Math.PI*2))-Math.PI;filtered.angle+=da*alpha;filtered.size=lerp(filtered.size,size,alpha);
+watch.position.set(filtered.x,stage.clientHeight-filtered.y,2);watch.rotation.z=filtered.angle;watch.scale.set(filtered.size,filtered.size,filtered.size);watch.visible=true;placeholder.style.display="none";statusEl.textContent="QR detectado + mão detectada. Posição estabilizada no referencial do marcador.";
+}else{watch.visible=false;filtered=null;filteredUV=null;statusEl.textContent="Não consegui calcular a posição em relação ao QR. Aproxime o código e mantenha-o inteiro no quadro.";}}
+}else{watch.visible=false;filtered=null;filteredUV=null;statusEl.textContent="Não encontrei a mão. Mostre a palma e o pulso inteiro, mantendo o QR visível.";}}
 renderer.render(scene,camera);raf=requestAnimationFrame(draw);}
 async function start(){startBtn.disabled=true;statusEl.textContent="Solicitando acesso à câmera...";try{
 if(!navigator.mediaDevices?.getUserMedia)throw Error("A câmera exige HTTPS e navegador compatível.");
 stream=await navigator.mediaDevices.getUserMedia({audio:false,video:{facingMode:{ideal:"environment"},width:{ideal:1280},height:{ideal:720}}});video.srcObject=stream;await video.play();
-statusEl.textContent="Carregando reconhecimento da mão...";let vision=await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm");
+statusEl.textContent="Carregando leitor de QR e reconhecimento da mão...";if(!window.jsQR)throw Error("O leitor de QR não carregou. Verifique a conexão e recarregue a página.");let vision=await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm");
 const modelAssetPath="https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task";
 try {
  detector=await HandLandmarker.createFromOptions(vision,{baseOptions:{modelAssetPath,delegate:"GPU"},runningMode:"VIDEO",numHands:1});
@@ -85,8 +97,8 @@ try {
  console.warn("GPU indisponível; tentando CPU",gpuError);
  detector=await HandLandmarker.createFromOptions(vision,{baseOptions:{modelAssetPath,delegate:"CPU"},runningMode:"VIDEO",numHands:1});
 }
-running=true;filtered=null;placeholder.style.display="none";stopBtn.disabled=false;statusEl.textContent="Câmera ligada. Mostre sua mão aberta.";draw();
+running=true;filtered=null;filteredUV=null;placeholder.style.display="none";stopBtn.disabled=false;statusEl.textContent="Câmera ligada. Mostre o QR Code inteiro e sua mão.";draw();
 }catch(e){console.error(e);statusEl.textContent="Não foi possível iniciar: "+(e?.message||e);if(stream)stream.getTracks().forEach(t=>t.stop());stream=null;startBtn.disabled=false;}}
-function stop(){running=false;if(raf)cancelAnimationFrame(raf);if(stream)stream.getTracks().forEach(t=>t.stop());stream=null;video.srcObject=null;watch.visible=false;filtered=null;renderer.render(scene,camera);placeholder.style.display="grid";placeholder.textContent="Câmera desligada. Toque em Iniciar câmera para testar novamente.";statusEl.textContent="Câmera desligada.";startBtn.disabled=false;stopBtn.disabled=true;}
+function stop(){running=false;if(raf)cancelAnimationFrame(raf);if(stream)stream.getTracks().forEach(t=>t.stop());stream=null;video.srcObject=null;watch.visible=false;filtered=null;filteredUV=null;guideCtx.clearRect(0,0,stage.clientWidth,stage.clientHeight);renderer.render(scene,camera);placeholder.style.display="grid";placeholder.textContent="Câmera desligada. Toque em Iniciar câmera para testar novamente.";statusEl.textContent="Câmera desligada.";startBtn.disabled=false;stopBtn.disabled=true;}
 startBtn.addEventListener("click",start);stopBtn.addEventListener("click",stop);window.addEventListener("pagehide",stop);
 </script></body></html>
